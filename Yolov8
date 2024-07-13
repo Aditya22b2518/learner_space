@@ -1,0 +1,21 @@
+from google.colab import drive
+from ultralytics import YOLO
+import zipfile
+import os
+
+drive.mount('/content/drive')
+zip_path = '/content/drive/My Drive/car.zip'
+extract_path = '/content/drive/My Drive/car.zip'
+data_config_path = '/content/drive/My Drive/car/data.yaml'  # Update this path if needed
+model = YOLO('yolov8n.pt')  # You can choose different versions such as yolov8s.pt, yolov8m.pt, etc.
+model.train(data=data_config_path, epochs=2, imgsz=640, batch=32)
+model.val(data=data_config_path)
+results = model.predict(data=data_config_path, split='test')
+save_dir = '/content/car/runs/detect/train9'
+model.plot_confusion_matrix(save_dir=save_dir)
+model.plot_results(save_dir=save_dir)
+
+from google.colab import files
+
+files.download('/content/car/runs/detect/train9/confusion_matrix.png')
+files.download('/content/car/runs/detect/train9/results.png')
