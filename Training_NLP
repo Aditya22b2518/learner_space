@@ -1,0 +1,112 @@
+import numpy as np
+import tensorflow as tf
+import nltk
+from nltk.corpus import gutenberg
+import matplotlib.pyplot as plt
+
+# Ensure the necessary NLTK data is downloaded
+nltk.download('gutenberg')
+nltk.download('punkt')
+
+# Load multiple texts from the Gutenberg corpus
+texts = [
+    gutenberg.words('bible-kjv.txt')
+]
+
+# Combine texts into a single list of words
+words = []
+for text in texts:
+    words.extend(text)
+
+print(f'Total number of words combined: {len(words)}')
+
+# Limit the vocabulary size
+vocab_size = 20000
+freq_dist = nltk.FreqDist(words)
+vocab = sorted(freq_dist, key=freq_dist.get, reverse=True)[:vocab_size]
+word_to_idx = {word: idx + 1 for idx, word in enumerate(vocab)}
+word_to_idx['<UNK>'] = 0  # Add an unknown token
+
+def encode_sequence(sequence):
+    return [word_to_idx.get(word, 0) for word in sequence]
+
+# Create N-gram sequences where the 3rd word is the target
+def create_ngram_sequences(text, n=5):
+    sequences = []
+    for i in range(n, len(text)):
+        sequence = text[i-n:i]
+        sequences.append(sequence)
+    return sequences
+
+sequences = create_ngram_sequences(words)
+encoded_sequences = [encode_sequence(seq) for seq in sequences]
+
+# Adjust input (X) and target (y) to match the new requirement
+X = np.array([seq[:2] + seq[3:] for seq in encoded_sequences])  # Input features (excluding the 3rd word)
+y = np.array([seq[2] for seq in encoded_sequences])             # Target output (the 3rd word)
+
+# Load the saved model if it exists, otherwise create a new one
+try:
+    model = tf.keras.models.load_model('word_prediction_model.h5', compile=False)
+    print("Model loaded from 'word_prediction_model.h5'")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                  loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+except:
+    print("Creating a new model...")
+    model = tf.keras.Sequential([
+        tf.keras.layers.Embedding(input_dim=vocab_size + 1, output_dim=200),  # Embedding layer
+        tf.keras.layers.LSTM(128, return_sequences=True),                     # LSTM layer with 128 units
+        tf.keras.layers.Dropout(0.2),                                         # Dropout for regularization
+        tf.keras.layers.LSTM(128),                                            # Another LSTM layer with 128 units
+        tf.keras.layers.Dense(128, activation='relu'),                        # Dense layer with 128 neurons
+        tf.keras.layers.Dense(vocab_size + 1, activation='softmax')           # Output layer
+    ])
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),  # Adjusted learning rate
+                  loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Resume training the model
+history = model.fit(X, y, epochs=10, batch_size=128, validation_split=0.2)  # Adjust epochs and batch size as needed
+
+# Save the trained model to a file
+model.save('word_prediction_model.h5')
+print("Model saved to 'word_prediction_model.h5'")
+
+# Evaluate the model on the validation data
+loss, accuracy = model.evaluate(X, y)
+print(f'Loss: {loss:.4f}, Accuracy: {accuracy:.4f} ({accuracy * 100:.2f}%)')
+
+# Display training and validation accuracy for each epoch
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.show()
+
+# Test the loaded model
+# Let's take the first 10 sequences from the original sequences for testing
+test_sequences = sequences[:10]
+encoded_test_sequences = [encode_sequence(seq) for seq in test_sequences]
+
+# Prepare the input data for the test
+X_test = np.array([seq[:2] + seq[3:] for seq in encoded_test_sequences])
+y_test = np.array([seq[2] for seq in encoded_test_sequences])
+
+# Make predictions
+predictions = model.predict(X_test)
+
+# Convert predictions from indices to words
+idx_to_word = {idx: word for word, idx in word_to_idx.items()}
+predicted_words = [idx_to_word[np.argmax(pred)] for pred in predictions]
+
+# Compare predictions with actual words
+actual_words = [idx_to_word[idx] for idx in y_test]
+
+for i in range(len(test_sequences)):
+    print(f"Context: {' '.join(test_sequences[i][:2] + test_sequences[i][3:])}")
+    print(f"Predicted: {predicted_words[i]}")
+    print(f"Actual: {actual_words[i]}")
+    print("------")
+
