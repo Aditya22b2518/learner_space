@@ -1,0 +1,113 @@
+import re
+import nltk
+import mysql.connector
+from mysql.connector import Error
+
+
+# Pattern to extract column name, operator, and value from input text
+pattern = r"(?P<column>\w+)\s+(?P<operator>>=|<=|!=|>|<|=)\s+(?P<value>\d+)"
+
+# Function to generate SQL query based on input text
+def generate_sql_query(input_text):
+    # Tokenize the input text
+    tokens = nltk.word_tokenize(input_text)
+
+    # Perform part-of-speech tagging
+    tagged_tokens = nltk.pos_tag(tokens)
+
+    # Print each token and its part-of-speech tag
+    print("Tokens and their POS tags:")
+    for token, pos_tag in tagged_tokens:
+        print(f"{token}: {pos_tag}")
+
+    # Extract relevant information
+    conditions = []
+    select_columns = []
+    column = None
+    value = None
+    operator = None
+    table_name = None
+
+    for i, (token, pos_tag) in enumerate(tagged_tokens):
+        if token.lower() == "where":
+            for j in range(i + 1, len(tagged_tokens)):
+                next_token, next_pos_tag = tagged_tokens[j]
+                if next_pos_tag.startswith('NN'):  # Noun
+                    if column is None:  # If column is not set yet
+                        column = next_token.lower()  # Assign the first noun encountered as the column
+                elif next_token in ['>', '>=', '<', '<=', '!=', '=']:  # Operator
+                    operator = next_token
+                elif next_pos_tag.startswith('CD'):  # Cardinal digit (number)
+                    value = next_token
+                    if column and value and operator:  # Check if all three are set
+                        conditions.append(f"{column} {operator} {value}")
+                        # Reset variables for next condition
+                        column = None
+                        value = None
+                        operator = None
+                        break
+        elif token.lower() == "from":
+            for j in range(i + 1, len(tagged_tokens)):  # Iterate forward to find the table name
+                next_token, next_pos_tag = tagged_tokens[j]
+                if next_pos_tag.startswith('NN'):  # Noun
+                    table_name = next_token
+                    break
+            for j in range(i - 1, -1, -1):  # Iterate backward to find the columns
+                prev_token, prev_pos_tag = tagged_tokens[j]
+                if prev_pos_tag.startswith('NN'):  # Noun
+                    select_columns.append(prev_token)
+                    print(select_columns)
+
+    if not select_columns:
+        select_columns = ['*']  # Default to selecting all columns if none are specified
+
+    # Construct SQL query
+    sql_query = f"SELECT {', '.join(select_columns)} FROM {table_name}"
+    if conditions:
+        sql_query += " WHERE " + " AND ".join(conditions)
+
+    return sql_query
+
+# Database connection parameters
+db_params = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'Way@1021',
+    'database': 'orders_database',
+    'port': '3306'
+}
+
+# Connect to MySQL database
+try:
+    conn = mysql.connector.connect(**db_params)
+    if conn.is_connected():
+        print("Connected to MySQL database!")
+except Error as e:
+    print(f"Error connecting to MySQL database: {e}")
+    exit()
+
+# Function to execute SQL query and retrieve data
+def execute_sql_query(sql_query):
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql_query)
+        rows = cursor.fetchall()
+        print("Query Result:", rows)
+    except Error as e:
+        print(f"Error executing SQL query: {e}")
+    finally:
+        cursor.close()
+
+# Example input text
+input_text = "extract product_id , product_name and Description from the products table where the stock_quantity < 100"
+
+# Generate SQL query
+sql_query = generate_sql_query(input_text)
+print("Generated SQL Query:", sql_query)
+
+# Execute SQL query and retrieve data
+execute_sql_query(sql_query)
+
+# Close the database connection
+conn.close()
+
