@@ -1,0 +1,108 @@
+import pandas as pd
+import numpy as np
+import os
+import cv2
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.metrics import AUC
+from sklearn.metrics import f1_score, average_precision_score
+from sklearn.preprocessing import label_binarize
+from google.colab import drive
+import zipfile
+
+drive.mount('/content/drive')
+
+train_confirm_path = '/content/drive/My Drive/KCDH2024_Training_LesionGroupings.xlsx'
+train_labels_path = '/content/drive/My Drive/KCDH2024_Training_GroundTruth.xlsx'
+test_labels_path = '/content/drive/My Drive/KCDH2024_Test_GroundTruth.xlsx'
+train_image_dir = '/content/drive/My Drive/train_images'
+test_image_zip_path = '/content/drive/My Drive/KCDH2024_Test_Input.zip'
+
+with zipfile.ZipFile(test_image_zip_path, 'r') as zip_ref:
+    zip_ref.extractall('/content/KCDH2024_Test_Input')
+
+test_image_dir = '/content/KCDH2024_Test_Input/KCDH2024_Test_Input'
+
+train_confirm_df = pd.read_excel(train_confirm_path)
+train_labels_df = pd.read_excel(train_labels_path)
+test_labels_df = pd.read_excel(test_labels_path)
+
+print("Training Confirm DF:")
+print(train_confirm_df.head())
+print("Training Labels DF:")
+print(train_labels_df.head())
+print("Test Labels DF:")
+print(test_labels_df.head())
+
+IMG_HEIGHT = 128
+IMG_WIDTH = 128
+
+def load_images(image_dir, dataframe, disease_categories):
+    images = []
+    labels = []
+    missing_files = []
+    for index, row in dataframe.iterrows():
+        img_path = os.path.join(image_dir, row['image'] + '.jpg')
+        img = cv2.imread(img_path)
+        if img is not None:
+            img = cv2.resize(img, (IMG_WIDTH, IMG_HEIGHT))
+            images.append(img)
+            labels.append(row[disease_categories].values.astype('float32'))
+        else:
+            missing_files.append(img_path)
+    images = np.array(images) / 255.0
+    labels = np.array(labels)
+    if missing_files:
+        print(f"Missing files: {missing_files}")
+    return images, labels
+
+disease_categories = ['MEL', 'NV', 'BCC', 'AKIEC', 'BKL', 'DF', 'VASC']
+
+X_train, y_train = load_images(train_image_dir, train_labels_df, disease_categories)
+X_test, y_test = load_images(test_image_dir, test_labels_df, disease_categories)
+
+print(f'Training data shape: {X_train.shape}')
+print(f'Test data shape: {X_test.shape}')
+
+if X_train.size == 0 or y_train.size == 0:
+    raise ValueError("Training data or labels not loaded correctly.")
+if X_test.size == 0 or y_test.size == 0:
+    raise ValueError("Test data or labels not loaded correctly.")
+
+y_train = np.array(y_train).astype('float32')
+y_test = np.array(y_test).astype('float32')
+
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(len(disease_categories), activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy', AUC()])
+
+history = model.fit(X_train, y_train, epochs=20, validation_split=0.2, batch_size=32)
+
+test_loss, test_accuracy, test_auc = model.evaluate(X_test, y_test)
+print(f'Test accuracy: {test_accuracy}')
+print(f'Test AUC: {test_auc}')
+
+y_pred_prob = model.predict(X_test)
+
+y_pred = np.argmax(y_pred_prob, axis=1)
+y_true = np.argmax(y_test, axis=1)
+
+f1 = f1_score(y_true, y_pred, average='weighted')
+print(f'F1 Score: {f1}')
+
+y_test_bin = label_binarize(y_true, classes=np.arange(len(disease_categories)))
+average_precision = average_precision_score(y_test_bin, y_pred_prob, average='macro')
+print(f'Mean Average Precision: {average_precision}')
+
+model.save('ham10000_classifier.keras')
